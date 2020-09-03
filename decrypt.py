@@ -49,7 +49,7 @@ class Decryption:
                         data = datain.read()
                         decrypted_data = self.decryptor.decrypt(data)
                     #writing decrypted files to disk
-                    with open(file.rstrip('.wasp'), "wb") as dwasp:
+                    with open(file.replace('.wasp',''), "wb") as dwasp:
                         dwasp.write(decrypted_data)
                     #remove encrypted file
                     os.remove(file)
