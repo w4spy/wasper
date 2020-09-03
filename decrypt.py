@@ -44,7 +44,7 @@ class Decryption:
         for file in self.filelist:
             try:
                 #decrypting files
-                if file.endswith(".wasp"):
+                if os.path.exists(file) and file.endswith(".wasp"):
                     with open(file, 'rb') as datain:
                         data = datain.read()
                         decrypted_data = self.decryptor.decrypt(data)
@@ -55,7 +55,7 @@ class Decryption:
                     os.remove(file)
             #log exceptions
             except Exception as e:
-                with open("decryption.log" , "a+") as log:
+                with open("decryption.log" , "a+", encoding="utf8") as log:
                     log.write(str(e)+"\n")
                 pass
 
